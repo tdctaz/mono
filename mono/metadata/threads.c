@@ -1031,6 +1031,15 @@ mono_thread_exit ()
 	ExitThread (-1);
 }
 
+void mono_thread_exiting ()
+{
+	if (!mono_threads_is_shutting_down ()) {
+		MonoThread *thread = mono_thread_current ();
+		if (thread)
+			mono_thread_detach (thread);
+	}
+}
+
 HANDLE ves_icall_System_Threading_Thread_Thread_internal(MonoThread *this,
 							 MonoObject *start)
 {
@@ -2730,6 +2739,17 @@ ves_icall_System_Threading_Thread_VolatileWriteObject (void *ptr, void *value)
 	mono_gc_wbarrier_generic_store (ptr, value);
 }
 
+#if !(defined(PLATFORM_WIN32) || defined(PLATFORM_WIN64))
+static pthread_key_t thread_exited_key;
+
+static void
+thread_exited_callback (void *k)
+{
+	mono_thread_exiting ();
+}
+
+#endif
+
 void mono_thread_init (MonoThreadStartCB start_cb,
 		       MonoThreadAttachCB attach_cb)
 {
@@ -2760,6 +2780,11 @@ void mono_thread_init (MonoThreadStartCB start_cb,
 	 * anything up.
 	 */
 	GetCurrentProcess ();
+
+#if !(defined(PLATFORM_WIN32) || defined(PLATFORM_WIN64))
+	int res = pthread_key_create (&thread_exited_key, thread_exited_callback);
+	g_assert (res == 0);
+#endif
 }
 
 void mono_thread_cleanup (void)
@@ -2801,6 +2826,12 @@ void mono_thread_cleanup (void)
 	}
 
 	TlsFree (current_object_key);
+#if !(defined(PLATFORM_WIN32) || defined(PLATFORM_WIN64))
+	{
+		int res = pthread_key_delete (thread_exited_key);
+		g_assert (res == 0);
+	}
+#endif
 }
 
 void
